@@ -1,0 +1,5 @@
+uploadfolder
+.env
+build/
+/tmp
+/note.sh
