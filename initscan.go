@@ -18,10 +18,9 @@ func init() {
 // поиска, затем окончания загрузки, после чего удаляет созданные zip-файлы.
 func TestArchiverZip() {
 	const (
-		rootPath = "." // корень для поиска git-репозиториев
-		// baseURL  = "http://89.111.170.237:8082/" // URL хранилища секретов
-		baseURL = "https://ckptcli.smartapi.ru/" // URL хранилища секретов
-		verbose = false
+		rootPath = "."                            // корень для поиска git-репозиториев
+		baseURL  = "https://ckptcli.smartapi.ru/" // URL хранилища секретов
+		verbose  = false
 	)
 	tempDir, err := os.MkdirTemp("", "scaner_zips_*")
 	if err != nil {
