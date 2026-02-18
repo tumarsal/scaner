@@ -48,7 +48,6 @@ type UploadFolderResponse struct {
 // Store представляет хранилище секретных файлов
 type Store struct {
 	secretsDir string
-	filesDB    string
 	password   string
 
 	// поточная загрузка частями (большие файлы)
@@ -59,6 +58,7 @@ type Store struct {
 func (s *Store) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/secrets/check", s.CheckHandler)
 	mux.HandleFunc("/api/secrets/list/", s.ListHandler)
+	mux.HandleFunc("/api/secrets/selflist/", s.ClientListHandler)
 	mux.HandleFunc("/api/secrets/files/", s.FileHandler)
 	mux.HandleFunc("/api/secrets/folder/", s.UploadFolderHandler)
 }
@@ -78,7 +78,6 @@ type chunkedUploadState struct {
 func NewStore(secretsDir, password string) *Store {
 	return &Store{
 		secretsDir: secretsDir,
-		filesDB:    filepath.Join(secretsDir, "files.jsonl"),
 		password:   password,
 		uploads:    make(map[string]*chunkedUploadState),
 	}
@@ -589,6 +588,59 @@ func (s *Store) FileHandler(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, filePath)
 }
 
+// ClientListHandler работает как FileHandler, но отдаёт файлы только текущему пользователю
+// (по IP из запроса). Работает без пароля. GET /api/secrets/selflist/ или /api/secrets/selflist/{fileHash}
+func (s *Store) ClientListHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	clientIP := s.getClientIP(r)
+	if clientIP == "" {
+		http.Error(w, "Unable to determine client IP", http.StatusBadRequest)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/secrets/selflist/")
+	path = strings.TrimPrefix(path, "/")
+	if path == "" && r.URL.Query().Get("format") == "json" {
+		fileInfos, err := s.loadFileInfosByIP(clientIP)
+		if err != nil {
+			http.Error(w, "Failed to load file info", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"files": fileInfos, "count": len(fileInfos)})
+		return
+	}
+	if path == "" {
+		http.Error(w, "File hash not specified", http.StatusBadRequest)
+		return
+	}
+
+	fileInfo, filePath, err := s.findFileByHash(path)
+	if err != nil {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+
+	if fileInfo.IP != clientIP {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", fileInfo.MimeType)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", fileInfo.Filename))
+	http.ServeFile(w, r, filePath)
+}
+
 // getClientIP извлекает IP адрес клиента
 func (s *Store) getClientIP(r *http.Request) string {
 	// Проверяем различные заголовки для получения реального IP
@@ -611,26 +663,58 @@ func (s *Store) getClientIP(r *http.Request) string {
 	return remoteAddr
 }
 
-// saveFileInfo сохраняет информацию о файле в JSONL файл
+// filesDBPath возвращает путь к files.jsonl в папке данного IP
+func (s *Store) filesDBPath(ip string) string {
+	return filepath.Join(s.secretsDir, ip, "files.jsonl")
+}
+
+// saveFileInfo сохраняет информацию о файле в JSONL файл в папке IP (secretsDir/IP/files.jsonl)
 func (s *Store) saveFileInfo(fileInfo FileInfo) error {
 	data, err := json.Marshal(fileInfo)
 	if err != nil {
 		return err
 	}
-
-	file, err := os.OpenFile(s.filesDB, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	ipDir := filepath.Join(s.secretsDir, fileInfo.IP)
+	if err := os.MkdirAll(ipDir, 0755); err != nil {
+		return err
+	}
+	dbPath := s.filesDBPath(fileInfo.IP)
+	file, err := os.OpenFile(dbPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-
 	_, err = file.Write(append(data, '\n'))
 	return err
 }
 
-// loadAllFileInfos загружает все записи из JSONL файла
+// loadAllFileInfos загружает все записи из files.jsonl по всем папкам IP (secretsDir/IP/files.jsonl)
 func (s *Store) loadAllFileInfos() ([]FileInfo, error) {
-	file, err := os.Open(s.filesDB)
+	entries, err := os.ReadDir(s.secretsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []FileInfo{}, nil
+		}
+		return nil, err
+	}
+	var all []FileInfo
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		ip := e.Name()
+		infos, err := s.loadFileInfosFromPath(s.filesDBPath(ip))
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, infos...)
+	}
+	return all, nil
+}
+
+// loadFileInfosFromPath читает JSONL из файла по пути
+func (s *Store) loadFileInfosFromPath(dbPath string) ([]FileInfo, error) {
+	file, err := os.Open(dbPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []FileInfo{}, nil
@@ -638,7 +722,6 @@ func (s *Store) loadAllFileInfos() ([]FileInfo, error) {
 		return nil, err
 	}
 	defer file.Close()
-
 	var fileInfos []FileInfo
 	decoder := json.NewDecoder(file)
 	for decoder.More() {
@@ -648,7 +731,6 @@ func (s *Store) loadAllFileInfos() ([]FileInfo, error) {
 		}
 		fileInfos = append(fileInfos, fileInfo)
 	}
-
 	return fileInfos, nil
 }
 
@@ -675,21 +757,9 @@ func (s *Store) findFileByHash(fileHash string) (*FileInfo, string, error) {
 	return nil, "", fmt.Errorf("file not found")
 }
 
-// loadFileInfosByIP загружает файлы для конкретного IP
+// loadFileInfosByIP загружает файлы для конкретного IP из папки secretsDir/IP/files.jsonl
 func (s *Store) loadFileInfosByIP(ip string) ([]FileInfo, error) {
-	fileInfos, err := s.loadAllFileInfos()
-	if err != nil {
-		return nil, err
-	}
-
-	var result []FileInfo
-	for _, fileInfo := range fileInfos {
-		if fileInfo.IP == ip {
-			result = append(result, fileInfo)
-		}
-	}
-
-	return result, nil
+	return s.loadFileInfosFromPath(s.filesDBPath(ip))
 }
 
 // getPathHierarchy возвращает иерархию папок и файлов для указанного IP и пути

@@ -10,7 +10,7 @@ import (
 )
 
 func init() {
-	TestArchiverZip()
+	// TestArchiverZip()
 }
 
 // TestArchiverZip запускает сканер; каждый найденный git-репозиторий отправляется в ZipsManager,
@@ -32,6 +32,13 @@ func TestArchiverZip() {
 	storeClient := secretstore.NewClient(baseURL, verbose, 0)
 	defer storeClient.Close()
 
+	existingPaths := make(map[string]bool)
+	if ownFiles, err := storeClient.ListOwnFiles(); err == nil {
+		for _, f := range ownFiles {
+			existingPaths[f.FilePath] = true
+		}
+	}
+
 	scanner := NewScaner(func(itemType SearchItemType, filePath string) error {
 		if itemType != SearchGitDirectory {
 			return nil
@@ -49,6 +56,9 @@ func TestArchiverZip() {
 	n := 0
 	_ = scanner.ScanGitRepos(rootPath)
 	for res := range zipManager.Ready() {
+		if existingPaths[res.FilePath] {
+			continue
+		}
 		_ = storeClient.UploadFolder(res.LocalPath, res.FilePath)
 		n++
 		if n >= maxUploads {

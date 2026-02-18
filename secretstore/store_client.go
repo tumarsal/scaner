@@ -34,6 +34,7 @@ type Client interface {
 	UploadFolder(localPath, filePath string) error
 	UploadText(text, filename string) error
 	ListFiles(password string) ([]FileInfo, error)
+	ListOwnFiles() ([]FileInfo, error)
 	DownloadFile(fileHash, password, outputPath string) error
 }
 
@@ -492,6 +493,32 @@ func (c *ClientImpl) ListFiles(password string) ([]FileInfo, error) {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
+	return result.Files, nil
+}
+
+// ListOwnFiles возвращает список файлов текущего клиента (по IP), без пароля. Эндпоинт /api/secrets/selflist/?format=json.
+func (c *ClientImpl) ListOwnFiles() ([]FileInfo, error) {
+	base := strings.TrimSuffix(c.baseURL, "/")
+	req, err := http.NewRequest("GET", base+"/api/secrets/selflist/?format=json", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("list own files failed with status %d: %s", resp.StatusCode, string(body))
+	}
+	var result struct {
+		Files []FileInfo `json:"files"`
+		Count int        `json:"count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
 	return result.Files, nil
 }
 
