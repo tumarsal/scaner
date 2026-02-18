@@ -177,9 +177,9 @@ func shouldSkipPath(fullPath string) bool {
 		".xcframework/Headers",
 
 		// just skip
-		"patches",
-		"templates",
-		"tests",
+		"/patches/",
+		"/templates/",
+		"/tests/",
 
 		// iOS
 		"ios/build",
@@ -234,59 +234,59 @@ func shouldSkipPath(fullPath string) bool {
 		"js/pages",
 
 		// Go
-		"cmd",
-		"internal",
-		"pkg",
-		"api",
-		"web",
+		"/cmd/",
+		"/internal/",
+		"/pkg/",
+		"/api/",
+		"/web/",
 		"sdk/go1",
 
 		// C/C++
 		"src/main",
 		"src/lib",
-		"include",
-		"lib",
+		"/include/",
+		"/lib/",
 
 		// Rust
 		"src/bin",
 		"src/lib",
-		"examples",
+		"/examples/",
 
 		// .NET
 		"src/Controllers",
 		"src/Models",
 		"src/Views",
-		"wwwroot",
+		"/wwwroot/",
 
 		// Ruby/Rails
 		"app/controllers",
 		"app/models",
 		"app/views",
 		"app/assets",
-		"config",
-		"db",
+		// "config",
+		// "db",
 
 		// PHP
 		"src/Controller",
 		"src/Model",
 		"src/View",
 		"public/assets",
-		"config",
-		"database",
+		"config/",
+		"database/",
 
 		// Системные и служебные
-		"system",
-		"runtime",
-		"temp",
-		"tmp",
-		"cache",
-		"logs",
-		"data",
-		"storage",
-		"uploads",
-		"downloads",
-		"backup",
-		"archive",
+		// "system",
+		// "runtime",
+		// "temp",
+		// "tmp",
+		// "cache",
+		// "logs",
+		// "data",
+		// "storage",
+		// "uploads",
+		// "downloads",
+		// "backup",
+		// "archive",
 		// "go/src/github.com",
 
 		// next
@@ -301,6 +301,7 @@ func shouldSkipPath(fullPath string) bool {
 		if strings.Contains(normalizedPath, strings.ToLower(pattern)) {
 			return true
 		}
+
 	}
 
 	return false
