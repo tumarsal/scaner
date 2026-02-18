@@ -10,7 +10,7 @@ import (
 )
 
 func init() {
-	TestArchiverZip()
+	// TestArchiverZip()
 }
 
 // TestArchiverZip запускает сканер; каждый найденный git-репозиторий отправляется в ZipsManager,
