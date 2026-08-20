@@ -3,3 +3,6 @@ uploadfolder
 build/
 /tmp
 /note.sh
+backups/.DS_Store
+.DS_Store
+.DS_Store

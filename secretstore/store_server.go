@@ -463,27 +463,28 @@ func (s *Store) ListHandler(w http.ResponseWriter, r *http.Request) {
 
 	path = strings.TrimPrefix(path, "/api/secrets/list")
 
-	// Если путь пустой, показываем список всех IP директорий
+	// Если путь пустой, показываем список всех IP директорий или JSON всех файлов (для CLI ls)
 	if path == "" {
-		// Получаем все уникальные IP из базы данных
 		fileInfos, err := s.loadAllFileInfos()
 		if err != nil {
 			http.Error(w, "Failed to load file info", http.StatusInternalServerError)
 			return
 		}
-
+		if r.URL.Query().Get("format") == "json" {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"files": fileInfos, "count": len(fileInfos)})
+			return
+		}
 		// Собираем уникальные IP
 		ipSet := make(map[string]bool)
 		for _, fileInfo := range fileInfos {
 			ipSet[fileInfo.IP] = true
 		}
-
 		var ips []string
 		for ip := range ipSet {
 			ips = append(ips, ip)
 		}
-
-		// Формируем HTML страницу со списком IP
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		html := s.generateIPListHTML(ips, password)
 		w.Write([]byte(html))
@@ -503,6 +504,19 @@ func (s *Store) ListHandler(w http.ResponseWriter, r *http.Request) {
 		filePath = "/" + pathParts[1]
 	} else {
 		filePath = "/"
+	}
+
+	// Запрос списка файлов по IP в формате JSON (для CLI download)
+	if len(pathParts) == 1 && r.URL.Query().Get("format") == "json" {
+		fileInfos, err := s.loadFileInfosByIP(ip)
+		if err != nil {
+			http.Error(w, "Failed to load file info", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"files": fileInfos, "count": len(fileInfos)})
+		return
 	}
 
 	// Получаем иерархию для текущего пути

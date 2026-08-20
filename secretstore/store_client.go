@@ -34,6 +34,7 @@ type Client interface {
 	UploadFolder(localPath, filePath string) error
 	UploadText(text, filename string) error
 	ListFiles(password string) ([]FileInfo, error)
+	ListFilesByIP(ip, password string) ([]FileInfo, error)
 	ListOwnFiles() ([]FileInfo, error)
 	DownloadFile(fileHash, password, outputPath string) error
 }
@@ -466,9 +467,9 @@ func (c *ClientImpl) enqueueTask(task *UploadTask) error {
 	}
 }
 
-// ListFiles получает список всех файлов
+// ListFiles получает список всех файлов. GET /api/secrets/list?password=...&format=json
 func (c *ClientImpl) ListFiles(password string) ([]FileInfo, error) {
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/secrets/list?password=%s", c.baseURL, password), nil)
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/secrets/list?password=%s&format=json", c.baseURL, password), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -493,6 +494,33 @@ func (c *ClientImpl) ListFiles(password string) ([]FileInfo, error) {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
+	return result.Files, nil
+}
+
+// ListFilesByIP возвращает список файлов для указанного IP. GET /api/secrets/list/{ip}?password=...&format=json
+func (c *ClientImpl) ListFilesByIP(ip, password string) ([]FileInfo, error) {
+	base := strings.TrimSuffix(c.baseURL, "/")
+	u := fmt.Sprintf("%s/api/secrets/list/%s?password=%s&format=json", base, ip, password)
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("list by IP failed with status %d: %s", resp.StatusCode, string(body))
+	}
+	var result struct {
+		Files []FileInfo `json:"files"`
+		Count int        `json:"count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
 	return result.Files, nil
 }
 
@@ -522,6 +550,82 @@ func (c *ClientImpl) ListOwnFiles() ([]FileInfo, error) {
 	return result.Files, nil
 }
 
+// progressReader оборачивает io.Reader и выводит прогресс скачивания в stderr.
+type progressReader struct {
+	r         io.Reader
+	total     int64
+	read      int64
+	startTime time.Time
+	label     string
+}
+
+func (pr *progressReader) Read(p []byte) (int, error) {
+	n, err := pr.r.Read(p)
+	pr.read += int64(n)
+	pr.print(err != nil && err != io.EOF)
+	return n, err
+}
+
+func (pr *progressReader) print(done bool) {
+	const barWidth = 30
+	elapsed := time.Since(pr.startTime).Seconds()
+	speed := float64(pr.read)
+	if elapsed > 0 {
+		speed = float64(pr.read) / elapsed
+	}
+
+	var bar string
+	var pct float64
+	var etaStr string
+
+	if pr.total > 0 {
+		pct = float64(pr.read) / float64(pr.total) * 100
+		filled := int(float64(barWidth) * float64(pr.read) / float64(pr.total))
+		if filled > barWidth {
+			filled = barWidth
+		}
+		bar = "[" + repeatStr("=", filled)
+		if filled < barWidth {
+			bar += ">" + repeatStr(" ", barWidth-filled-1)
+		}
+		bar += "]"
+
+		if speed > 0 && pr.read < pr.total {
+			eta := time.Duration(float64(pr.total-pr.read)/speed) * time.Second
+			etaStr = "  ETA " + eta.Round(time.Second).String()
+		}
+	} else {
+		bar = "[" + repeatStr("-", barWidth) + "]"
+	}
+
+	readStr := formatByteSize(pr.read)
+	speedStr := formatByteSize(int64(speed)) + "/s"
+
+	if pr.total > 0 {
+		totalStr := formatByteSize(pr.total)
+		fmt.Fprintf(os.Stderr, "\r%s  %s  %.1f%%  %s / %s  %s%s    ",
+			bar, pr.label, pct, readStr, totalStr, speedStr, etaStr)
+	} else {
+		fmt.Fprintf(os.Stderr, "\r%s  %s  %s  %s    ",
+			bar, pr.label, readStr, speedStr)
+	}
+
+	if done {
+		fmt.Fprintln(os.Stderr)
+	}
+}
+
+func repeatStr(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	result := make([]byte, n*len(s))
+	for i := range n {
+		copy(result[i*len(s):], s)
+	}
+	return string(result)
+}
+
 // DownloadFile скачивает файл по хешу
 func (c *ClientImpl) DownloadFile(fileHash, password, outputPath string) error {
 	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/secrets/files/%s?password=%s", c.baseURL, fileHash, password), nil)
@@ -529,7 +633,7 @@ func (c *ClientImpl) DownloadFile(fileHash, password, outputPath string) error {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	resp, err := c.client.Do(req)
+	resp, err := c.uploadClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
@@ -546,7 +650,17 @@ func (c *ClientImpl) DownloadFile(fileHash, password, outputPath string) error {
 	}
 	defer file.Close()
 
-	if _, err := io.Copy(file, resp.Body); err != nil {
+	var src io.Reader = resp.Body
+	if c.verbose {
+		src = &progressReader{
+			r:         resp.Body,
+			total:     resp.ContentLength,
+			startTime: time.Now(),
+			label:     filepath.Base(outputPath),
+		}
+	}
+
+	if _, err := io.Copy(file, src); err != nil {
 		return fmt.Errorf("failed to copy file content: %w", err)
 	}
 

