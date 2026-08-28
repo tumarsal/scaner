@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/tumarsal/scaner/cmd/clean"
 	"github.com/tumarsal/scaner/cmd/download"
 	"github.com/tumarsal/scaner/cmd/ls"
 	"github.com/tumarsal/scaner/cmd/scan"
@@ -28,7 +29,8 @@ var rootCmd = &cobra.Command{
   scan     — сканирование директории (SSH ключи, .env, конфиги, кошельки, git), архивирование или загрузка на сервер
   upload   — упаковка папки в zip (с опциональным разбиением по размеру) и выгрузка на сервер
   download — скачивание всех файлов с сервера для указанного IP в папку (имена как на сервере, дубликаты — суффикс _1, _2, ...)
-  ls       — дерево удалённого хранилища с датой обновления (все IP или один с --ip)`,
+  ls       — дерево удалённого хранилища с датой обновления (все IP или один с --ip)
+  clean    — поиск проектов и удаление зависимостей/артефактов сборки (по умолчанию dry-run, -f удаляет)`,
 }
 
 func init() {
@@ -36,4 +38,5 @@ func init() {
 	rootCmd.AddCommand(upload.Command())
 	rootCmd.AddCommand(download.Command())
 	rootCmd.AddCommand(ls.Command())
+	rootCmd.AddCommand(clean.Command())
 }
