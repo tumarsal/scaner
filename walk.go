@@ -1,6 +1,7 @@
 package scaner
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -13,12 +14,24 @@ import (
 // SkipDir tells WalkTree to skip descending into the current directory.
 var SkipDir = fs.SkipDir
 
+func walkContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
 // Walk обходит дерево от root по glob-шаблону (например "**/*.md")
 // и вызывает fn для каждого найденного файла.
 // Если root — файл, совпадающий с шаблоном, fn вызывается только для него.
-func Walk(root, pattern string, fn func(path string) error) error {
+// Обход прекращается, если ctx отменён.
+func Walk(ctx context.Context, root, pattern string, fn func(path string) error) error {
 	if fn == nil {
 		return fmt.Errorf("walk callback is nil")
+	}
+	ctx = walkContext(ctx)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	info, err := os.Stat(root)
 	if err != nil {
@@ -30,12 +43,18 @@ func Walk(root, pattern string, fn func(path string) error) error {
 			return err
 		}
 		if matched {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			return fn(root)
 		}
 		return nil
 	}
 	return doublestar.GlobWalk(os.DirFS(root), pattern,
 		func(p string, d fs.DirEntry) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if d.IsDir() {
 				return nil
 			}
@@ -49,9 +68,14 @@ func Walk(root, pattern string, fn func(path string) error) error {
 // fn вызывается для каждого файла и каталога под root (сам root не передаётся).
 // Чтобы не заходить в каталог, верните SkipDir.
 // Ошибки доступа к отдельным записям пропускаются (fn не вызывается).
-func WalkTree(root string, fn func(path string, d fs.DirEntry) error) error {
+// Обход прекращается, если ctx отменён.
+func WalkTree(ctx context.Context, root string, fn func(path string, d fs.DirEntry) error) error {
 	if fn == nil {
 		return fmt.Errorf("walk callback is nil")
+	}
+	ctx = walkContext(ctx)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	info, err := os.Stat(root)
 	if err != nil {
@@ -63,6 +87,9 @@ func WalkTree(root string, fn func(path string, d fs.DirEntry) error) error {
 	root = filepath.Clean(root)
 	return doublestar.GlobWalk(os.DirFS(root), "**",
 		func(p string, d fs.DirEntry) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if p == "." || p == "" {
 				return nil
 			}

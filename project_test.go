@@ -3,6 +3,7 @@ package scaner
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -190,6 +191,41 @@ func TestCleanForceRemovesOnlyArtifacts(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "package.json")); err != nil {
 		t.Fatal("package.json не должен удаляться")
+	}
+}
+
+func TestFindProjects_GitRepoOnly(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "legacy")
+	mustMkdir(t, repo)
+	mustMkdir(t, filepath.Join(repo, ".git", "objects"))
+	mustWrite(t, filepath.Join(repo, ".git", "HEAD"), "ref: refs/heads/main\n")
+	mustWrite(t, filepath.Join(repo, ".git", "objects", "pack"), strings.Repeat("x", 100))
+	mustWrite(t, filepath.Join(repo, "readme.md"), "hi")
+
+	projects, err := FindProjects(root, false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projects) != 1 {
+		t.Fatalf("ожидался 1 git-проект, got %+v", projects)
+	}
+	if !hasKind(projects[0], ProjectGit) || projects[0].Root != repo {
+		t.Fatalf("unexpected project: %+v", projects[0])
+	}
+}
+
+func TestFindProjects_GoProjectWithGitNotDuplicated(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "go.mod"), "module x\n")
+	mustMkdir(t, filepath.Join(root, ".git"))
+
+	projects, err := FindProjects(root, false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projects) != 1 || !hasKind(projects[0], ProjectGo) {
+		t.Fatalf("ожидался go-проект, got %+v", projects)
 	}
 }
 

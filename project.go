@@ -1,6 +1,7 @@
 package scaner
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
@@ -29,6 +30,7 @@ const (
 	ProjectCMake  ProjectKind = "cmake"
 	ProjectSwift  ProjectKind = "swift"
 	ProjectDart   ProjectKind = "dart"
+	ProjectGit    ProjectKind = "git"
 )
 
 // Project — найденный корень проекта с типами и существующими артефактами.
@@ -69,6 +71,15 @@ var markerRules = []struct {
 // В папки артефактов уже найденных проектов не заходит.
 // maxDepth: 0 — без ограничения; N > 0 — максимальная глубина относительно root (root = 0).
 func FindProjects(root string, verbose bool, maxDepth int) ([]Project, error) {
+	return findProjects(root, verbose, maxDepth, nil)
+}
+
+// FindProjectsWithCallback то же, что FindProjects; onDir вызывается для каждой посещаемой директории.
+func FindProjectsWithCallback(root string, verbose bool, maxDepth int, onDir func(string)) ([]Project, error) {
+	return findProjects(root, verbose, maxDepth, onDir)
+}
+
+func findProjects(root string, verbose bool, maxDepth int, onDir func(string)) ([]Project, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения абсолютного пути: %w", err)
@@ -83,6 +94,7 @@ func FindProjects(root string, verbose bool, maxDepth int) ([]Project, error) {
 
 	var projects []Project
 	skipArtifacts := make(map[string]bool)
+	gitRoots := make(map[string]bool)
 
 	logf := func(format string, args ...interface{}) {
 		if verbose {
@@ -97,6 +109,13 @@ func FindProjects(root string, verbose bool, maxDepth int) ([]Project, error) {
 	cleanIgn := NewCleanIgnore(absRoot)
 	cleanIgn.LoadDir(absRoot)
 
+	visitDir := func(path string) {
+		if onDir != nil {
+			onDir(path)
+		}
+	}
+	visitDir(absRoot)
+
 	// Корень (глубина 0)
 	if p, ok := detectProject(absRoot); ok {
 		projects = append(projects, p)
@@ -104,6 +123,9 @@ func FindProjects(root string, verbose bool, maxDepth int) ([]Project, error) {
 			skipArtifacts[a] = true
 		}
 		logProjectArtifacts(logf, p)
+	} else if IsGitRepo(absRoot) {
+		projects = append(projects, Project{Root: absRoot, Kinds: []ProjectKind{ProjectGit}})
+		gitRoots[absRoot] = true
 	}
 
 	err = doublestar.GlobWalk(os.DirFS(absRoot), "**",
@@ -112,6 +134,10 @@ func FindProjects(root string, verbose bool, maxDepth int) ([]Project, error) {
 				return nil
 			}
 			fullPath := filepath.Join(absRoot, path)
+			visitDir(fullPath)
+			if repo, ok := underGitRepo(fullPath, gitRoots); ok && fullPath != repo {
+				return doublestar.SkipDir
+			}
 			depth := relativeDepth(absRoot, fullPath)
 
 			if maxDepth > 0 && depth > maxDepth {
@@ -152,6 +178,10 @@ func FindProjects(root string, verbose bool, maxDepth int) ([]Project, error) {
 					skipArtifacts[a] = true
 				}
 				logProjectArtifacts(logf, p)
+			} else if IsGitRepo(fullPath) {
+				projects = append(projects, Project{Root: fullPath, Kinds: []ProjectKind{ProjectGit}})
+				gitRoots[fullPath] = true
+				return doublestar.SkipDir
 			}
 
 			if maxDepth > 0 && depth >= maxDepth {
@@ -165,6 +195,22 @@ func FindProjects(root string, verbose bool, maxDepth int) ([]Project, error) {
 		return projects, err
 	}
 	return projects, nil
+}
+
+// IsGitRepo reports whether dir is a git repository root (.git exists).
+func IsGitRepo(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, ".git"))
+	return err == nil
+}
+
+func underGitRepo(path string, gitRoots map[string]bool) (string, bool) {
+	sep := string(filepath.Separator)
+	for root := range gitRoots {
+		if path == root || strings.HasPrefix(path, root+sep) {
+			return root, true
+		}
+	}
+	return "", false
 }
 
 // relativeDepth возвращает глубину path относительно root (root → 0).
@@ -282,7 +328,7 @@ func DirSize(root string) (int64, error) {
 		return info.Size(), nil
 	}
 	var total int64
-	err = WalkTree(root, func(_ string, d fs.DirEntry) error {
+	err = WalkTree(context.Background(), root, func(_ string, d fs.DirEntry) error {
 		if d.IsDir() {
 			return nil
 		}

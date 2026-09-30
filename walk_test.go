@@ -1,6 +1,8 @@
 package scaner
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -20,7 +22,7 @@ func TestWalkTreeVisitsFilesAndDirs(t *testing.T) {
 	}
 
 	seen := map[string]bool{}
-	err := WalkTree(root, func(path string, d os.DirEntry) error {
+	err := WalkTree(context.Background(), root, func(path string, d os.DirEntry) error {
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			t.Fatal(err)
@@ -59,7 +61,7 @@ func TestWalkTreeSkipDir(t *testing.T) {
 	}
 
 	seen := map[string]struct{}{}
-	err := WalkTree(root, func(path string, d os.DirEntry) error {
+	err := WalkTree(context.Background(), root, func(path string, d os.DirEntry) error {
 		rel, _ := filepath.Rel(root, path)
 		rel = filepath.ToSlash(rel)
 		seen[rel] = struct{}{}
@@ -90,5 +92,50 @@ func TestDirSizeUsesWalkTree(t *testing.T) {
 	}
 	if n != 5 {
 		t.Fatalf("DirSize=%d want 5", n)
+	}
+}
+
+func TestWalkTreeAlreadyCanceled(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := WalkTree(ctx, root, func(string, os.DirEntry) error {
+		t.Fatal("callback не должен вызываться при отменённом контексте")
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ожидался context.Canceled, получено %v", err)
+	}
+}
+
+func TestWalkTreeCancelDuringWalk(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 8; i++ {
+		dir := filepath.Join(root, filepath.Join("d", string(rune('a'+i))))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	n := 0
+	err := WalkTree(ctx, root, func(string, os.DirEntry) error {
+		n++
+		if n == 1 {
+			cancel()
+		}
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ожидался context.Canceled, получено %v visits=%d", err, n)
+	}
+	if n == 0 {
+		t.Fatal("ожидался хотя бы один вызов callback до отмены")
 	}
 }
